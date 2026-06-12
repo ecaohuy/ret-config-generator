@@ -267,14 +267,44 @@ def build_rows(cdd_path, sheet, mapping):
     return rows, skipped, len(sector_order)
 
 
+def _find_template_header_row(ws, headers, max_scan=20):
+    """Find the column-header row in the template by matching known header tokens.
+
+    Templates may have preamble rows above the header (e.g. an orange
+    'Declaration' note), so the header is not always row 1. Returns the 1-based
+    row index whose cells best match ``headers``; falls back to row 1.
+    """
+    targets = [_norm_header(h) for h in headers]
+    max_col = ws.max_column or 1
+    best_row, best_score = 1, 0
+    for i in range(1, min(ws.max_row or 1, max_scan) + 1):
+        cells = [_norm_header(ws.cell(row=i, column=c).value) for c in range(1, max_col + 1)]
+        score = sum(1 for t in targets if t and any(t in cell for cell in cells))
+        if score > best_score:
+            best_score, best_row = score, i
+    return best_row if best_score >= 2 else 1
+
+
 def write_output(template_path, target_sheet, rows, output_path):
-    """Write rows into a copy of the template, preserving row-2 styling."""
+    """Write rows into a copy of the template, preserving its header rows and
+    the styling of its first data row.
+
+    The header row is detected (it may sit below preamble rows such as a
+    Declaration note), so everything up to and including the header is kept and
+    data is written starting on the next row.
+    """
     out_wb = load_workbook(template_path)
     out_ws = out_wb[target_sheet]
 
+    header_row = _find_template_header_row(out_ws, HEADERS)
+    data_start = header_row + 1
+
+    # Sample styling from the template's first data row (below the header);
+    # if the template has no data rows, fall back to the header row.
+    style_row = data_start if (out_ws.max_row or 0) >= data_start else header_row
     template_row_styles = []
     for col in range(1, out_ws.max_column + 1):
-        cell = out_ws.cell(row=2, column=col)
+        cell = out_ws.cell(row=style_row, column=col)
         template_row_styles.append({
             "font": copy(cell.font),
             "fill": copy(cell.fill),
@@ -283,11 +313,12 @@ def write_output(template_path, target_sheet, rows, output_path):
             "number_format": cell.number_format,
         })
 
-    if out_ws.max_row >= 2:
-        out_ws.delete_rows(2, out_ws.max_row - 1)
+    # Clear existing data rows only (keep preamble + header).
+    if (out_ws.max_row or 0) >= data_start:
+        out_ws.delete_rows(data_start, out_ws.max_row - data_start + 1)
 
     for i, values in enumerate(rows):
-        out_row = 2 + i
+        out_row = data_start + i
         for col_idx, v in enumerate(values, start=1):
             c = out_ws.cell(row=out_row, column=col_idx, value=v)
             if col_idx - 1 < len(template_row_styles):
