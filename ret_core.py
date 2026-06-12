@@ -29,6 +29,43 @@ def load_mapping(path):
         return json.load(f)
 
 
+def _norm_header(s):
+    """Normalize a header cell for tolerant matching (case/whitespace-insensitive)."""
+    if s is None:
+        return ""
+    return " ".join(str(s).split()).strip().lower()
+
+
+def _col_letter_to_index(letter):
+    """'A' -> 0, 'B' -> 1, ... (single-letter columns)."""
+    return ord(str(letter).strip().upper()[0]) - ord("A")
+
+
+def _find_index(norm_headers, targets):
+    """Index of the first header matching any target (exact, then startswith)."""
+    targets = [t for t in targets if t]
+    for t in targets:
+        if t in norm_headers:
+            return norm_headers.index(t)
+    for i, h in enumerate(norm_headers):
+        if h and any(h.startswith(t) for t in targets):
+            return i
+    return None
+
+
+def _locate_header(all_rows, key_targets, max_scan=10):
+    """Find the header row by locating the key column; return (row_index, norm_headers).
+
+    Scans the first ``max_scan`` rows so a leading title/blank row doesn't break
+    detection. Falls back to row 0 if the key column is never found.
+    """
+    for i, row in enumerate(all_rows[:max_scan]):
+        norm = [_norm_header(h) for h in row]
+        if _find_index(norm, key_targets) is not None:
+            return i, norm
+    return 0, [_norm_header(h) for h in (all_rows[0] if all_rows else ())]
+
+
 def list_sheets(cdd_path):
     """Return sheet names in the CDD workbook."""
     wb = load_workbook(cdd_path, read_only=True)
@@ -52,18 +89,35 @@ def load_three_g_tilts(cdd_wb, mapping):
     if not cfg or cfg["sheet"] not in cdd_wb.sheetnames:
         return {}
     ws = cdd_wb[cfg["sheet"]]
-    sec_col = ord(cfg.get("logical_sector_column", "B").upper()) - ord("A")
-    tilt_col = ord(cfg.get("etilt_column", "F").upper()) - ord("A")
+    all_rows = list(ws.iter_rows(min_row=1, values_only=True))
+    if not all_rows:
+        return {}
+
+    # Locate the Logical Sector Name and New E-Tilt columns by header name.
+    sec_targets = [_norm_header(cfg.get("logical_sector_header", "")),
+                   _norm_header(cfg.get("logical_sector_header_prefix", "Logical Sector Name"))]
+    tilt_targets = [_norm_header(cfg.get("etilt_header", "New E-Tilt"))]
+    hdr_idx, norm = _locate_header(all_rows, sec_targets)
+    sec_col = _find_index(norm, sec_targets)
+    tilt_col = _find_index(norm, tilt_targets)
+    # Fall back to configured column letters if a header isn't found.
+    if sec_col is None and cfg.get("logical_sector_column"):
+        sec_col = _col_letter_to_index(cfg["logical_sector_column"])
+    if tilt_col is None and cfg.get("etilt_column"):
+        tilt_col = _col_letter_to_index(cfg["etilt_column"])
+    if sec_col is None:
+        return {}
+
     sep = cfg.get("separator", "-")
     tilts = {}
-    for r in ws.iter_rows(min_row=2, values_only=True):
-        if len(r) <= sec_col or r[sec_col] is None:
+    for r in all_rows[hdr_idx + 1:]:
+        if not r or len(r) <= sec_col or r[sec_col] is None:
             continue
         site_old, _, num = str(r[sec_col]).partition(sep)
         if not num:
             continue
         key = (site_old.strip(), num.strip())
-        e_tilt = r[tilt_col] if len(r) > tilt_col else None
+        e_tilt = r[tilt_col] if (tilt_col is not None and len(r) > tilt_col) else None
         try:
             e_tilt_val = float(e_tilt) if e_tilt not in (None, "-", "") else None
         except (TypeError, ValueError):
@@ -92,24 +146,53 @@ def build_rows(cdd_path, sheet, mapping):
 
     cdd_wb = load_workbook(cdd_path, data_only=True)
     cdd_ws = cdd_wb[sheet]
-    src_rows = list(cdd_ws.iter_rows(min_row=2, values_only=True))
+    all_rows = list(cdd_ws.iter_rows(min_row=1, values_only=True))
     three_g_tilts = load_three_g_tilts(cdd_wb, mapping)
     cdd_wb.close()
 
+    # Resolve columns by HEADER NAME so reordered/extra columns don't break parsing.
+    hdr_cfg = mapping.get("source", {}).get("headers", {})
+    wanted = {
+        "site_old": hdr_cfg.get("site_old", "SiteName (RRU Location)_Old"),
+        "site_new": hdr_cfg.get("site_new", "SiteName (RRU Location)_New"),
+        "ne_id": hdr_cfg.get("ne_id", "Ne ID (New)"),
+        "cell_name": hdr_cfg.get("cell_name", "CellName (New)[Key]"),
+        "e_tilt": hdr_cfg.get("e_tilt", "E_TILT"),
+    }
+    cell_targets = [_norm_header(wanted["cell_name"])]
+    hdr_idx, norm = _locate_header(all_rows, cell_targets)
+    col = {f: _find_index(norm, [_norm_header(name)]) for f, name in wanted.items()}
+
+    required = ("site_old", "site_new", "ne_id", "cell_name")
+    missing = [wanted[f] for f in required if col[f] is None]
+    if missing:
+        found = [str(h) for h in (all_rows[hdr_idx] if all_rows else ()) if h is not None]
+        raise ValueError(
+            "Sheet '%s': could not find required column(s) by header name: %s.\n"
+            "Headers found in the sheet:\n  %s\n"
+            "Check the column names in mapping.json -> source.headers."
+            % (sheet, ", ".join('\"%s\"' % m for m in missing), "\n  ".join(found))
+        )
+
+    src_rows = all_rows[hdr_idx + 1:]
     by_sector = defaultdict(dict)   # (site_new, ne_id, Y) -> {X: e_tilt}
     sector_site_old = {}            # (site_new, ne_id, Y) -> site_old
     sector_order = []
     seen_sector = set()
     skipped = []
 
+    def _get(r, field):
+        j = col[field]
+        return r[j] if (j is not None and len(r) > j) else None
+
     for r in src_rows:
-        if not r or len(r) < 7 or r[6] is None:
+        if not r or _get(r, "cell_name") is None:
             continue
-        site_old = r[0]
-        site_new = r[1]
-        ne_id = r[5]
-        cell = str(r[6])
-        e_tilt = r[7] if len(r) > 7 else None
+        site_old = _get(r, "site_old")
+        site_new = _get(r, "site_new")
+        ne_id = _get(r, "ne_id")
+        cell = str(_get(r, "cell_name"))
+        e_tilt = _get(r, "e_tilt")
         if len(cell) < 2:
             skipped.append((cell, "too short"))
             continue

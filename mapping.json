@@ -3,19 +3,14 @@
   "source": {
     "file": "CDD.xlsx",
     "sheet": "4G CDD",
-    "key_column": "G",
-    "key_name": "CellName (New)[Key]",
-    "fields": {
-      "site_old": "A: SiteName (RRU Location)_Old",
-      "site_new": "B: SiteName (RRU Location)_New",
-      "main_site": "C: Main SiteName (New)",
-      "ne_name": "D: NEName_New",
-      "enodeb_name": "E: eNodeB Name_New",
-      "ne_id": "F: Ne ID (New)",
-      "cell_name": "G: CellName (New)[Key]",
-      "e_tilt": "H: E_TILT",
-      "m_tilt_old": "I: M_TILT(old)",
-      "m_tilt_new": "J: M_TILT"
+    "match_columns_by": "header_name",
+    "_note": "Columns are located by HEADER NAME (case/whitespace tolerant), not by position, so the CDD may have extra/reordered columns (e.g. an added Latitude column).",
+    "headers": {
+      "site_old": "SiteName (RRU Location)_Old",
+      "site_new": "SiteName (RRU Location)_New",
+      "ne_id": "Ne ID (New)",
+      "cell_name": "CellName (New)[Key]",
+      "e_tilt": "E_TILT"
     }
   },
   "target": {
@@ -56,12 +51,12 @@
   },
   "three_g": {
     "sheet": "3G Installation Design",
-    "site_column": "A",
-    "site_name": "Site (RRU SiteName == 4G SiteName_Old)",
+    "match_columns_by": "header_name",
+    "logical_sector_header": "Logical Sector Name (RRU SiteName\"-\"Logical sector ID)",
+    "logical_sector_header_prefix": "Logical Sector Name",
+    "etilt_header": "New E-Tilt",
     "logical_sector_column": "B",
-    "logical_sector_name": "Logical Sector Name (RRU SiteName\"-\"Logical sector ID)",
     "etilt_column": "F",
-    "etilt_name": "New E-Tilt",
     "separator": "-",
     "governs_device": 3,
     "governs_band": "E",
