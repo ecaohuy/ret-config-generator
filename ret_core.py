@@ -93,14 +93,20 @@ def load_three_g_tilts(cdd_wb, mapping):
     if not all_rows:
         return {}
 
-    # Locate the Logical Sector Name and New E-Tilt columns by header name.
+    # Locate columns by header name. The site MATCH key comes from the 'Site'
+    # column (== 4G SiteName_Old); only the sector number comes from the
+    # Logical Sector Name (text after the last separator).
+    site_targets = [_norm_header(cfg.get("site_header", "Site"))]
     sec_targets = [_norm_header(cfg.get("logical_sector_header", "")),
                    _norm_header(cfg.get("logical_sector_header_prefix", "Logical Sector Name"))]
     tilt_targets = [_norm_header(cfg.get("etilt_header", "New E-Tilt"))]
     hdr_idx, norm = _locate_header(all_rows, sec_targets)
+    site_col = _find_index(norm, site_targets)
     sec_col = _find_index(norm, sec_targets)
     tilt_col = _find_index(norm, tilt_targets)
     # Fall back to configured column letters if a header isn't found.
+    if site_col is None and cfg.get("site_column"):
+        site_col = _col_letter_to_index(cfg["site_column"])
     if sec_col is None and cfg.get("logical_sector_column"):
         sec_col = _col_letter_to_index(cfg["logical_sector_column"])
     if tilt_col is None and cfg.get("etilt_column"):
@@ -113,9 +119,16 @@ def load_three_g_tilts(cdd_wb, mapping):
     for r in all_rows[hdr_idx + 1:]:
         if not r or len(r) <= sec_col or r[sec_col] is None:
             continue
-        site_old, _, num = str(r[sec_col]).partition(sep)
-        if not num:
+        # Sector number = last segment of the Logical Sector Name (rpartition
+        # so a site name containing the separator doesn't confuse it).
+        _, _, num = str(r[sec_col]).rpartition(sep)
+        if not num.strip():
             continue
+        # Site comes from the 'Site' column when available, else the LSN prefix.
+        if site_col is not None and len(r) > site_col and r[site_col] is not None:
+            site_old = str(r[site_col])
+        else:
+            site_old = str(r[sec_col]).rpartition(sep)[0]
         key = (site_old.strip(), num.strip())
         e_tilt = r[tilt_col] if (tilt_col is not None and len(r) > tilt_col) else None
         try:
@@ -189,6 +202,7 @@ def build_rows(cdd_path, sheet, mapping):
         if not r or _get(r, "cell_name") is None:
             continue
         site_old = _get(r, "site_old")
+        site_old = str(site_old).strip() if site_old is not None else ""
         site_new = _get(r, "site_new")
         ne_id = _get(r, "ne_id")
         cell = str(_get(r, "cell_name"))
