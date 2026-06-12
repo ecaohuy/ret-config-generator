@@ -1,0 +1,11 @@
+mapping: 
+ X = LEFT(RIGHT(G2, 2),1)  (in 4G CDD sheet) so on
+if X = C - > L1800
+   X = D -> L1800 F2
+   X = E -> L2100
+   
+ Y = RIGHT(G2,1)
+ if Y = A -> S1 -> RRU SRN(*) (colum in RETConfigWDT Internal ) - > 60 
+    Y = B -> S2- > RRU SRN(*) (colum in RETConfigWDT Internal ) - > 61
+    Y = C -> S3 -> RRU SRN(*) (colum in RETConfigWDT Internal ) - > 62
+    Y = D -> S4 -> RRU SRN(*) (colum in RETConfigWDT Internal ) - > 63

@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Excel temp/lock files
+.~*.xlsx
+~$*.xlsx
+
+# Generated output
+RETConfigWDTInternal_new.xlsx
+
+# Real CDD data — do NOT publish (read at runtime via Browse instead)
+CDD.xlsx
+RETDeviceNamingRuleSouth.xlsx

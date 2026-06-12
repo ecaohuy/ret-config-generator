@@ -1,0 +1,124 @@
+{
+  "description": "Mapping rules to generate RETConfigWDTInternal.xlsx from CDD.xlsx (4G CDD sheet) using the RETDeviceNamingRuleSouth template.",
+  "source": {
+    "file": "CDD.xlsx",
+    "sheet": "4G CDD",
+    "key_column": "G",
+    "key_name": "CellName (New)[Key]",
+    "fields": {
+      "site_old": "A: SiteName (RRU Location)_Old",
+      "site_new": "B: SiteName (RRU Location)_New",
+      "main_site": "C: Main SiteName (New)",
+      "ne_name": "D: NEName_New",
+      "enodeb_name": "E: eNodeB Name_New",
+      "ne_id": "F: Ne ID (New)",
+      "cell_name": "G: CellName (New)[Key]",
+      "e_tilt": "H: E_TILT",
+      "m_tilt_old": "I: M_TILT(old)",
+      "m_tilt_new": "J: M_TILT"
+    }
+  },
+  "target": {
+    "file": "RETConfigWDTInternal.xlsx",
+    "sheet": "Internal",
+    "columns": {
+      "site_name": "站点名称 / Site Name(*)",
+      "rru_name": "RCU所在扇区名称 / RRU Name(*)",
+      "rru_cn": "RRU柜号 / RRU CN(*)",
+      "rru_srn": "RRU框号 / RRU SRN(*)",
+      "rru_sn": "RRU槽号 / RRU SN(*)",
+      "rcu_coloring": "天线Color编码 / RCU Coloring(*)",
+      "rcu_tilt": "电调天线角度 / RCU Tilt(*) unit=0.1度",
+      "device_name": "设备名称 / Device Name"
+    }
+  },
+  "extraction": {
+    "X": {
+      "formula": "LEFT(RIGHT(CellName, 2), 1)",
+      "meaning": "2nd-to-last char of CellName -> band identifier"
+    },
+    "Y": {
+      "formula": "RIGHT(CellName, 1)",
+      "meaning": "last char of CellName -> sector identifier"
+    }
+  },
+  "band_map": {
+    "C": { "band_token": "L1800",      "device_group": 1, "slot_suffix": "_1", "color": "Lb1"   },
+    "D": { "band_token": "L1800 F2",   "device_group": 2, "slot_suffix": "_2", "color": "CLb2"  },
+    "E": { "band_token": "NSN_U2100",  "device_group": 3, "slot_suffix": "_1", "color": "CRb3"  },
+    "_NOT_USED_": { "band_token": "NOT_USED", "device_group": 4, "slot_suffix": "_2", "color": "Rb4" }
+  },
+  "sector_map": {
+    "A": { "sector_id": "S1", "rru_srn": 60 },
+    "B": { "sector_id": "S2", "rru_srn": 61 },
+    "C": { "sector_id": "S3", "rru_srn": 62 },
+    "D": { "sector_id": "S4", "rru_srn": 63 }
+  },
+  "three_g": {
+    "sheet": "3G Installation Design",
+    "site_column": "A",
+    "site_name": "Site (RRU SiteName == 4G SiteName_Old)",
+    "logical_sector_column": "B",
+    "logical_sector_name": "Logical Sector Name (RRU SiteName\"-\"Logical sector ID)",
+    "etilt_column": "F",
+    "etilt_name": "New E-Tilt",
+    "separator": "-",
+    "governs_device": 3,
+    "governs_band": "E",
+    "present_band_token": "NSN_U2100",
+    "absent_band_token": "NOT_USED",
+    "sector_id_to_number": { "S1": "1", "S2": "2", "S3": "3", "S4": "4" },
+    "rule": "Device No 3 (band E) is resolved against the 3G Installation Design sheet. Build the lookup key as {SiteName_Old}{separator}{sector number}. If that Logical Sector Name exists, emit NSN_U2100 (e.g. AGGPQC01_686001_NSN_U2100_S1_1) with RCU Tilt = round(New E-Tilt * 10) taken from that sheet (first non-blank value per sector); otherwise emit NOT_USED keeping the same sector and _1 suffix (e.g. AGGPQC01_686001_NOT_USED_S1_1) with tilt 0. Color/SRN of the device-3 slot are unchanged."
+  },
+  "constants": {
+    "rru_cn": 0,
+    "rru_sn": 0
+  },
+  "field_rules": {
+    "site_name": {
+      "expr": "{site_new}_{ne_id}",
+      "example": "AGGPQC01_686001"
+    },
+    "rru_name": {
+      "expr": "{site_new}_{ne_id}_{band_token}_{sector_id}_{device_group}",
+      "examples": {
+        "AGGPQC01BM4DA": "AGGPQC01_686001_L1800 F2_S1_2",
+        "AGGPQC01BM4EA": "AGGPQC01_686001_NSN_U2100_S1_3",
+        "AGGPQC01BM4CB": "AGGPQC01_686001_L1800_S2_1"
+      }
+    },
+    "rru_cn":  { "value": 0 },
+    "rru_srn": { "from": "sector_map[Y].rru_srn" },
+    "rru_sn":  { "value": 0 },
+    "rcu_coloring": { "from": "band_map[X].color" },
+    "rcu_tilt": {
+      "expr": "round(E_TILT * 10)",
+      "unit": "0.1 degree",
+      "note": "CDD E_TILT is in degrees; WDT requires 0.1° units, so multiply by 10."
+    },
+    "device_name": {
+      "expr": "{rru_name}",
+      "note": "Device Name == RRU Name per template."
+    }
+  },
+  "column_copy_rules": [
+    {
+      "target_column": "H",
+      "target_name": "Device Name",
+      "source_column": "B",
+      "source_name": "RRU Name",
+      "rule": "value in column H = value in column B",
+      "note": "Output Device Name (H) mirrors output RRU Name (B)."
+    }
+  ],
+  "row_expansion": {
+    "note": "Each CDD CellName row maps to one WDT row keyed on (X,Y). For each sector that exists in CDD (Y in {A,B,C,...}), a 4th 'NOT_USED' device row should be emitted per sector if not already present, to match the naming rule template (devices 1-4 per sector).",
+    "per_sector_devices": [1, 2, 3, 4]
+  },
+  "validation": {
+    "site_format": "^[A-Z]{2,}[0-9]{2,}$",
+    "cell_name_format": "^<site><suffix><X><Y>$ where X in [C,D,E], Y in [A,B,C,D]",
+    "unknown_X_action": "skip row and log",
+    "unknown_Y_action": "skip row and log"
+  }
+}
