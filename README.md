@@ -17,6 +17,17 @@ No install needed — double-click to run.
 `mapping.json` and the style template are bundled into the `.exe`, so the tool
 works out of the box; you only need to provide your own CDD file at runtime.
 
+## Design rules
+
+- **Logic lives in `mapping.json`** — any change to the transformation rules
+  (column names, naming patterns, bands, tilt sources, …) is made by editing
+  `mapping.json`, never by hardcoding values in the Python code.
+- **Style lives in the template** — any change to the output's look (header
+  rows, colors, fonts, banner text) is made by editing the template workbook
+  (`RETConfigWDTInternal.xlsx`). The generator copies the template, keeps its
+  preamble/header rows, and only fills in data rows, sampling their style from
+  the template's first data row.
+
 ### Device No 3 rule
 Device No 3 (band `E` / `NSN_U2100`) is resolved against the **3G Installation
 Design** sheet. If the sector's Logical Sector Name (`{SiteName_Old}-{sector#}`)
