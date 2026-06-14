@@ -32,6 +32,8 @@ jobs:
           pyinstaller --onefile --windowed --name RET-Generator
           --add-data "mapping.json;."
           --add-data "RETConfigWDTInternal.xlsx;."
+          --add-data "RET_template.txt;."
+          --add-data "RET_input.txt;."
           ret_gui.py
 
       - name: Upload build artifact
