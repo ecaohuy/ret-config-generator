@@ -3,6 +3,7 @@
 Shared by generate_ret.py (CLI) and ret_gui.py (Tkinter GUI).
 """
 import json
+import re
 from collections import defaultdict
 from copy import copy
 
@@ -330,3 +331,186 @@ def write_output(template_path, target_sheet, rows, output_path):
                 c.number_format = s["number_format"]
 
     out_wb.save(output_path)
+
+
+# --------------------------------------------------------------------------
+# RET_template.txt -> RET_output.txt (MML script) conversion.
+#
+# Rewrites three things in an "ADD RET / MOD RETTILT" MML template using the
+# RET_input.txt serials and the CDD-derived rows (build_rows):
+#   * DEVICENAME : replace the site-prefix tokens with {SiteName_New}_{Ne ID}.
+#   * SERIALNO   : take the input serial matched by (CTRLSRN, RIGHT(serial,3)).
+#   * TILT       : RCU Tilt of the same-DEVICENO ADD RET device, matched
+#                  positionally (CTRLSRN -> sector, device order within sector).
+# All rules/field names live in mapping.json -> text_config.
+# --------------------------------------------------------------------------
+
+# MML field regexes (DEVICENO/CTRLSRN allow an optional leading space, e.g.
+# "DEVICENO= 0"; CTRLSRN is matched whole so it never collides with CTRLSN).
+_RE_DEVICENO = re.compile(r"DEVICENO=\s*(\d+)")
+_RE_DEVICENAME = re.compile(r'DEVICENAME="([^"]*)"')
+_RE_CTRLSRN = re.compile(r"CTRLSRN=\s*(\d+)")
+_RE_SERIALNO = re.compile(r'SERIALNO="([^"]*)"')
+_RE_TILT = re.compile(r"TILT=\s*(-?\d+)")
+
+
+def parse_ret_input(input_path, mapping):
+    """Parse RET_input.txt -> (site, serials).
+
+    Line 1 (first non-blank) is the site name. Each remaining line is split on
+    whitespace; ``serials`` maps (CTRLSRN, RIGHT(serial, suffix_len)) -> full
+    serial, the key used to rewrite each template SERIALNO.
+    """
+    cfg = mapping.get("text_config", {}).get("input", {})
+    srn_col = cfg.get("ctrlsrn_column", 1)
+    ser_col = cfg.get("serial_column", 7)
+    suf_len = cfg.get("serial_suffix_len", 3)
+
+    with open(input_path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    site = None
+    serials = {}
+    for ln in lines:
+        if not ln.strip():
+            continue
+        if site is None:
+            site = ln.strip()
+            continue
+        parts = ln.split()
+        if len(parts) <= max(srn_col, ser_col):
+            continue
+        srn = parts[srn_col].strip()
+        serial = parts[ser_col].strip()
+        serials[(srn, serial[-suf_len:])] = serial
+    if site is None:
+        raise ValueError("RET input file is empty: %s" % input_path)
+    return site, serials
+
+
+def _site_tilt_index(rows, site, mapping):
+    """From build_rows output, return (new_prefix, tilt_by_sector_pos) for ``site``.
+
+    ``new_prefix`` is the CDD 'Site Name' ({SiteName_New}_{Ne ID}) for the site.
+    ``tilt_by_sector_pos`` maps (sector_id, position) -> RCU Tilt, where position
+    is the device's 0-based order within its sector (build_rows emits the 4
+    devices per sector in a fixed order, matching the template's per-sector
+    device order).
+    """
+    site_rows = [r for r in rows if str(r[0]).rsplit("_", 1)[0] == site]
+    if not site_rows:
+        available = sorted({str(r[0]).rsplit("_", 1)[0] for r in rows})
+        raise ValueError(
+            "Site %r (from RET input) was not found in the CDD output.\n"
+            "Sites available in the CDD: %s" % (site, ", ".join(available))
+        )
+    new_prefix = str(site_rows[0][0])
+
+    tilt_by_sector_pos = {}
+    pos_counter = defaultdict(int)
+    for r in site_rows:
+        # RRU Name = "{prefix}_{band}_{sector_id}_{slot}"; sector_id is the
+        # second-to-last underscore segment.
+        sector_id = str(r[1]).rsplit("_", 2)[1]
+        pos = pos_counter[sector_id]
+        tilt_by_sector_pos[(sector_id, pos)] = r[6]
+        pos_counter[sector_id] += 1
+    return new_prefix, tilt_by_sector_pos
+
+
+def build_text_output(template_path, input_path, cdd_path, sheet, mapping):
+    """Produce the rewritten MML text. Returns (text, warnings).
+
+    Uses build_rows(cdd_path, sheet) for Ne ID and RCU Tilt, and parse_ret_input
+    for the replacement serials.
+    """
+    site, serials = parse_ret_input(input_path, mapping)
+    rows, _, _ = build_rows(cdd_path, sheet, mapping)
+    new_prefix, tilt_by_sector_pos = _site_tilt_index(rows, site, mapping)
+
+    srn_to_sector = {
+        str(v["rru_srn"]): v["sector_id"] for v in mapping["sector_map"].values()
+    }
+
+    tcfg = mapping.get("text_config", {}).get("template", {})
+    prefix_tokens = tcfg.get("prefix_token_count", 2)
+    add_prefix = tcfg.get("add_line_prefix", "ADD RET")
+    tilt_prefix = tcfg.get("tilt_line_prefix", "MOD RETTILT")
+    suf_len = mapping.get("text_config", {}).get("input", {}).get("serial_suffix_len", 3)
+
+    with open(template_path, encoding="utf-8") as f:
+        tmpl_lines = f.readlines()
+
+    warnings = []
+
+    # Pass 1: DEVICENO -> RCU Tilt, using each ADD RET line's CTRLSRN (sector)
+    # and its order within that sector (positional match).
+    deviceno_tilt = {}
+    add_pos = defaultdict(int)
+    for ln in tmpl_lines:
+        if not ln.lstrip().startswith(add_prefix):
+            continue
+        m_no, m_srn = _RE_DEVICENO.search(ln), _RE_CTRLSRN.search(ln)
+        if not (m_no and m_srn):
+            continue
+        srn = m_srn.group(1)
+        pos = add_pos[srn]
+        add_pos[srn] += 1
+        sector_id = srn_to_sector.get(srn)
+        tilt = tilt_by_sector_pos.get((sector_id, pos))
+        if tilt is None:
+            warnings.append(
+                "No RCU Tilt for DEVICENO=%s (CTRLSRN=%s, sector=%s, pos=%d)"
+                % (m_no.group(1), srn, sector_id, pos)
+            )
+        deviceno_tilt[m_no.group(1)] = tilt
+
+    # Pass 2: rewrite lines in place, preserving everything else verbatim.
+    out_lines = []
+    for ln in tmpl_lines:
+        stripped = ln.lstrip()
+        if stripped.startswith(add_prefix):
+            def _sub_devicename(m):
+                tokens = m.group(1).split("_")
+                suffix = "_".join(tokens[prefix_tokens:])
+                return 'DEVICENAME="%s"' % (new_prefix + "_" + suffix)
+
+            ln = _RE_DEVICENAME.sub(_sub_devicename, ln)
+
+            m_srn = _RE_CTRLSRN.search(ln)
+            if m_srn:
+                srn = m_srn.group(1)
+
+                def _sub_serial(m):
+                    suffix = m.group(1)[-suf_len:]
+                    new = serials.get((srn, suffix))
+                    if new is None:
+                        warnings.append(
+                            "No input serial for CTRLSRN=%s suffix=%s" % (srn, suffix)
+                        )
+                        return m.group(0)
+                    return 'SERIALNO="%s"' % new
+
+                ln = _RE_SERIALNO.sub(_sub_serial, ln)
+            out_lines.append(ln)
+        elif stripped.startswith(tilt_prefix):
+            m_no = _RE_DEVICENO.search(ln)
+            if m_no:
+                tilt = deviceno_tilt.get(m_no.group(1))
+                if tilt is not None:
+                    ln = _RE_TILT.sub("TILT=%d" % int(round(float(tilt))), ln)
+                else:
+                    warnings.append("No tilt for MOD RETTILT DEVICENO=%s" % m_no.group(1))
+            out_lines.append(ln)
+        else:
+            out_lines.append(ln)
+
+    return "".join(out_lines), warnings
+
+
+def write_text_output(template_path, input_path, cdd_path, sheet, mapping, output_path):
+    """build_text_output + write to ``output_path``. Returns warnings."""
+    text, warnings = build_text_output(template_path, input_path, cdd_path, sheet, mapping)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return warnings

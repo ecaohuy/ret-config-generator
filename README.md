@@ -34,11 +34,27 @@ Design** sheet. If the sector's Logical Sector Name (`{SiteName_Old}-{sector#}`)
 exists there, the row is `…_NSN_U2100_S{n}_1` with tilt from that sheet's
 *New E-Tilt*; otherwise it becomes `…_NOT_USED_S{n}_1` with tilt 0.
 
+## RET MML text conversion
+
+The second GUI tab (**RET MML (txt)**) rewrites a `RET_template.txt` MML script
+(`ADD RET` / `MOD RETTILT` lines) into an output script using `RET_input.txt`
+and the same CDD file:
+
+- **DEVICENAME** — the site prefix (`DTPTDN01_704380`) is replaced with
+  `{SiteName_New}_{Ne ID}` from the CDD; the band/sector/slot suffix is kept.
+- **SERIALNO** — replaced with the input serial whose `CTRLSRN` and last 3
+  characters (e.g. `Lb1`) match the template line.
+- **MOD RETTILT `TILT`** — set to the `RCU Tilt` of the same device, matched
+  positionally (`CTRLSRN` → sector, plus device order within the sector).
+
+These rules live in `mapping.json → text_config`.
+
 ## Build locally
 
 ```bash
-uv run ret_gui.py      # GUI
-uv run generate_ret.py # CLI
+uv run ret_gui.py           # GUI (both tabs)
+uv run generate_ret.py      # CLI: CDD -> WDT xlsx
+uv run generate_ret_text.py # CLI: RET_template.txt -> RET_output.txt
 ```
 
 The Windows `.exe` is built automatically by GitHub Actions

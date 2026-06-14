@@ -72,6 +72,27 @@
     "rru_cn": 0,
     "rru_sn": 0
   },
+  "text_config": {
+    "description": "Rules for the RET_template.txt -> RET_output.txt text conversion (ADD RET / MOD RETTILT MML script). DEVICENAME prefix, SERIALNO and TILT are rewritten from RET_input.txt + the CDD-derived rows.",
+    "input": {
+      "_note": "RET_input.txt: line 1 = site name (== CDD SiteName_New); remaining lines are whitespace/tab separated columns. Indices are 0-based after splitting on whitespace.",
+      "site_line": 0,
+      "ctrlsrn_column": 1,
+      "serial_column": 7,
+      "serial_suffix_len": 3
+    },
+    "template": {
+      "_note": "MML field names and the two line kinds. prefix_token_count = number of leading underscore-separated tokens in DEVICENAME that form the site prefix (site + Ne ID), which get replaced; the rest (band_sector_slot) is kept.",
+      "prefix_token_count": 2,
+      "add_line_prefix": "ADD RET",
+      "tilt_line_prefix": "MOD RETTILT"
+    },
+    "rules": {
+      "devicename": "Replace the leading {prefix_token_count} tokens of DEVICENAME with {SiteName_New}_{Ne ID (New)} (the CDD 'Site Name'); keep the band/sector/slot suffix from the template.",
+      "serialno": "Replace SERIALNO with the input serial whose (CTRLSRN, RIGHT(serial,serial_suffix_len)) matches the template line's (CTRLSRN, RIGHT(SERIALNO,serial_suffix_len)).",
+      "tilt": "MOD RETTILT TILT = the RCU Tilt of the ADD RET device with the same DEVICENO, matched POSITIONALLY: CTRLSRN -> sector_id, plus the device's order within that sector (1st..4th) -> the corresponding CDD row's RCU Tilt."
+    }
+  },
   "field_rules": {
     "site_name": {
       "expr": "{site_new}_{ne_id}",

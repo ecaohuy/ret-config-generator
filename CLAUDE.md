@@ -1,8 +1,16 @@
 # RET Config Generator — project rules
 
 Tool that generates `RETConfigWDTInternal` output from a CDD workbook.
-Entry points: `ret_gui.py` (Tkinter GUI), `generate_ret.py` (CLI); shared
-logic in `ret_core.py`. Windows EXE is built by GitHub Actions on `v*` tags.
+Entry points: `ret_gui.py` (Tkinter GUI, two tabs), `generate_ret.py` (CLI,
+CDD→WDT xlsx) and `generate_ret_text.py` (CLI, RET_template.txt→RET_output.txt
+MML); shared logic in `ret_core.py`. Windows EXE is built by GitHub Actions on
+`v*` tags.
+
+The second feature rewrites an `ADD RET` / `MOD RETTILT` MML template
+(`RET_template.txt`) using `RET_input.txt` serials and the CDD-derived rows:
+DEVICENAME prefix → `{SiteName_New}_{Ne ID}`, SERIALNO matched by
+`(CTRLSRN, RIGHT(serial,3))`, and `MOD RETTILT` TILT taken positionally from the
+RCU Tilt of the same device. Its rules live in `mapping.json → text_config`.
 
 ## Design rules (must follow)
 
