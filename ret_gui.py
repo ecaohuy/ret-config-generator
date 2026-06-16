@@ -37,6 +37,7 @@ class App(tk.Tk):
         self.title("RET Config Generator")
         self.geometry("960x640")
         self.minsize(820, 560)
+        self._set_icon()
 
         self.cdd_var = tk.StringVar(value=_default("CDD.xlsx"))
         self.sheet_var = tk.StringVar()
@@ -56,6 +57,19 @@ class App(tk.Tk):
         self._build()
         if self.cdd_var.get():
             self._load_sheets()
+
+    def _set_icon(self):
+        """Window/taskbar icon: Huawei logo. .ico on Windows, .png elsewhere."""
+        try:
+            ico = _default("huawei.ico")
+            if ico and sys.platform.startswith("win"):
+                self.iconbitmap(ico)
+            png = _default("huawei.png")
+            if png:
+                self._icon_img = tk.PhotoImage(file=png)  # keep a reference
+                self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
 
     # ---------- layout ----------
     def _build(self):
@@ -89,7 +103,18 @@ class App(tk.Tk):
         self._file_row(inp, 3, "Template (style):", self.template_var,
                        lambda: self._browse_into(self.template_var, "Excel", "*.xlsx"))
 
-        # --- 2. Preview ---
+        # --- 3. Output --- packed at the bottom FIRST so the Generate button is
+        # always reserved and never clipped when the window is short (Windows).
+        outp = ttk.LabelFrame(parent, text="3. Output")
+        outp.pack(side="bottom", fill="x", **pad)
+        outp.columnconfigure(1, weight=1)
+        self._file_row(outp, 0, "Save to:", self.output_var, self._browse_output, save=True)
+
+        actions = ttk.Frame(outp)
+        actions.grid(row=1, column=0, columnspan=3, sticky="e", padx=8, pady=6)
+        ttk.Button(actions, text="Generate", command=self.generate).pack(side="right")
+
+        # --- 2. Preview --- fills the remaining space between inputs and output.
         prev = ttk.LabelFrame(parent, text="2. Preview")
         prev.pack(fill="both", expand=True, **pad)
 
@@ -108,16 +133,6 @@ class App(tk.Tk):
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=4)
         vsb.pack(side="left", fill="y", pady=4)
-
-        # --- 3. Output ---
-        outp = ttk.LabelFrame(parent, text="3. Output")
-        outp.pack(fill="x", **pad)
-        outp.columnconfigure(1, weight=1)
-        self._file_row(outp, 0, "Save to:", self.output_var, self._browse_output, save=True)
-
-        actions = ttk.Frame(outp)
-        actions.grid(row=1, column=0, columnspan=3, sticky="e", padx=8, pady=6)
-        ttk.Button(actions, text="Generate", command=self.generate).pack(side="right")
 
     def _file_row(self, parent, row, label, var, cmd, save=False):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=4)
@@ -169,6 +184,15 @@ class App(tk.Tk):
             except Exception:
                 pass
 
+        # Output packed at the bottom FIRST so Generate is never clipped (Windows).
+        outp = ttk.LabelFrame(parent, text="3. Output")
+        outp.pack(side="bottom", fill="x", **pad)
+        outp.columnconfigure(1, weight=1)
+        self._file_row(outp, 0, "Save to:", self.txt_output_var, self._browse_text_output, save=True)
+        actions = ttk.Frame(outp)
+        actions.grid(row=1, column=0, columnspan=3, sticky="e", padx=8, pady=6)
+        ttk.Button(actions, text="Generate", command=self.text_generate).pack(side="right")
+
         prev = ttk.LabelFrame(parent, text="2. Preview")
         prev.pack(fill="both", expand=True, **pad)
         bar = ttk.Frame(prev)
@@ -181,17 +205,9 @@ class App(tk.Tk):
         ysb = ttk.Scrollbar(prev, orient="vertical", command=self.txt_preview.yview)
         xsb = ttk.Scrollbar(prev, orient="horizontal", command=self.txt_preview.xview)
         self.txt_preview.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+        xsb.pack(side="bottom", fill="x")
         self.txt_preview.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=4)
         ysb.pack(side="left", fill="y", pady=4)
-        xsb.pack(side="bottom", fill="x")
-
-        outp = ttk.LabelFrame(parent, text="3. Output")
-        outp.pack(fill="x", **pad)
-        outp.columnconfigure(1, weight=1)
-        self._file_row(outp, 0, "Save to:", self.txt_output_var, self._browse_text_output, save=True)
-        actions = ttk.Frame(outp)
-        actions.grid(row=1, column=0, columnspan=3, sticky="e", padx=8, pady=6)
-        ttk.Button(actions, text="Generate", command=self.text_generate).pack(side="right")
 
     def _load_input_file(self):
         """Load a .txt file into the paste box (it remains editable)."""

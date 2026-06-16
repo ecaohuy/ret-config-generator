@@ -30,10 +30,13 @@ jobs:
       - name: Build EXE
         run: >
           pyinstaller --onefile --windowed --name RET-Generator
+          --icon "huawei.ico"
           --add-data "mapping.json;."
           --add-data "RETConfigWDTInternal.xlsx;."
           --add-data "RET_template.txt;."
           --add-data "RET_input.txt;."
+          --add-data "huawei.ico;."
+          --add-data "huawei.png;."
           ret_gui.py
 
       - name: Upload build artifact
