@@ -150,10 +150,24 @@ class App(tk.Tk):
         self._file_row(inp, 2, "Mapping (config):", self.mapping_var,
                        lambda: self._browse_into(self.mapping_var, "JSON", "*.json"))
 
-        self._file_row(inp, 3, "RET input (.txt):", self.txt_input_var,
-                       lambda: self._browse_into(self.txt_input_var, "Text", "*.txt"))
-        self._file_row(inp, 4, "RET template (.txt):", self.txt_template_var,
+        self._file_row(inp, 3, "RET template (.txt):", self.txt_template_var,
                        lambda: self._browse_into(self.txt_template_var, "Text", "*.txt"))
+
+        # RET input: paste it directly here (preferred) or load a file into the box.
+        ttk.Label(inp, text="RET input (paste):").grid(row=4, column=0, sticky="nw", padx=8, pady=4)
+        self.txt_input_box = tk.Text(inp, height=6, wrap="none", undo=True)
+        self.txt_input_box.grid(row=4, column=1, sticky="ew", padx=8, pady=4)
+        btns = ttk.Frame(inp)
+        btns.grid(row=4, column=2, sticky="n", padx=8, pady=4)
+        ttk.Button(btns, text="Load file…", command=self._load_input_file).pack(fill="x")
+        ttk.Button(btns, text="Clear", command=lambda: self.txt_input_box.delete("1.0", "end")).pack(fill="x", pady=(4, 0))
+        # Prefill from the default RET_input.txt if present, so the box isn't empty.
+        if self.txt_input_var.get() and os.path.exists(self.txt_input_var.get()):
+            try:
+                with open(self.txt_input_var.get(), encoding="utf-8") as f:
+                    self.txt_input_box.insert("1.0", f.read())
+            except Exception:
+                pass
 
         prev = ttk.LabelFrame(parent, text="2. Preview")
         prev.pack(fill="both", expand=True, **pad)
@@ -179,6 +193,21 @@ class App(tk.Tk):
         actions.grid(row=1, column=0, columnspan=3, sticky="e", padx=8, pady=6)
         ttk.Button(actions, text="Generate", command=self.text_generate).pack(side="right")
 
+    def _load_input_file(self):
+        """Load a .txt file into the paste box (it remains editable)."""
+        path = filedialog.askopenfilename(filetypes=[("Text", "*.txt"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            messagebox.showerror("Cannot read file", str(e))
+            return
+        self.txt_input_var.set(path)
+        self.txt_input_box.delete("1.0", "end")
+        self.txt_input_box.insert("1.0", content)
+
     def _browse_text_output(self):
         path = filedialog.asksaveasfilename(
             title="Save output as", defaultextension=".txt",
@@ -189,8 +218,9 @@ class App(tk.Tk):
 
     def _gather_text(self):
         """Validate inputs and return (mapping, sheet, text, warnings)."""
-        if not os.path.exists(self.txt_input_var.get()):
-            raise ValueError("Please select a valid RET input (.txt) file.")
+        input_text = self.txt_input_box.get("1.0", "end-1c")
+        if not input_text.strip():
+            raise ValueError("Paste the RET input text (or use 'Load file…').")
         if not os.path.exists(self.txt_template_var.get()):
             raise ValueError("Please select a valid RET template (.txt) file.")
         if not self.cdd_var.get() or not os.path.exists(self.cdd_var.get()):
@@ -203,6 +233,7 @@ class App(tk.Tk):
         text, warnings = ret_core.build_text_output(
             self.txt_template_var.get(), self.txt_input_var.get(),
             self.cdd_var.get(), self.sheet_var.get(), mapping,
+            input_text=input_text,
         )
         return mapping, text, warnings
 

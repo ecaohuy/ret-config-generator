@@ -361,13 +361,19 @@ def parse_ret_input(input_path, mapping):
     whitespace; ``serials`` maps (CTRLSRN, RIGHT(serial, suffix_len)) -> full
     serial, the key used to rewrite each template SERIALNO.
     """
+    with open(input_path, encoding="utf-8") as f:
+        text = f.read()
+    return parse_ret_input_text(text, mapping, source=input_path)
+
+
+def parse_ret_input_text(text, mapping, source="pasted input"):
+    """Same as parse_ret_input but on an in-memory string (e.g. pasted text)."""
     cfg = mapping.get("text_config", {}).get("input", {})
     srn_col = cfg.get("ctrlsrn_column", 1)
     ser_col = cfg.get("serial_column", 7)
     suf_len = cfg.get("serial_suffix_len", 3)
 
-    with open(input_path, encoding="utf-8") as f:
-        lines = f.readlines()
+    lines = text.splitlines()
 
     site = None
     serials = {}
@@ -384,7 +390,7 @@ def parse_ret_input(input_path, mapping):
         serial = parts[ser_col].strip()
         serials[(srn, serial[-suf_len:])] = serial
     if site is None:
-        raise ValueError("RET input file is empty: %s" % input_path)
+        raise ValueError("RET input is empty: %s" % source)
     return site, serials
 
 
@@ -418,13 +424,18 @@ def _site_tilt_index(rows, site, mapping):
     return new_prefix, tilt_by_sector_pos
 
 
-def build_text_output(template_path, input_path, cdd_path, sheet, mapping):
+def build_text_output(template_path, input_path, cdd_path, sheet, mapping,
+                      input_text=None):
     """Produce the rewritten MML text. Returns (text, warnings).
 
     Uses build_rows(cdd_path, sheet) for Ne ID and RCU Tilt, and parse_ret_input
-    for the replacement serials.
+    for the replacement serials. If ``input_text`` is given (e.g. pasted into the
+    GUI), it is parsed instead of reading ``input_path``.
     """
-    site, serials = parse_ret_input(input_path, mapping)
+    if input_text is not None and input_text.strip():
+        site, serials = parse_ret_input_text(input_text, mapping)
+    else:
+        site, serials = parse_ret_input(input_path, mapping)
     rows, _, _ = build_rows(cdd_path, sheet, mapping)
     new_prefix, tilt_by_sector_pos = _site_tilt_index(rows, site, mapping)
 
@@ -508,9 +519,12 @@ def build_text_output(template_path, input_path, cdd_path, sheet, mapping):
     return "".join(out_lines), warnings
 
 
-def write_text_output(template_path, input_path, cdd_path, sheet, mapping, output_path):
+def write_text_output(template_path, input_path, cdd_path, sheet, mapping, output_path,
+                      input_text=None):
     """build_text_output + write to ``output_path``. Returns warnings."""
-    text, warnings = build_text_output(template_path, input_path, cdd_path, sheet, mapping)
+    text, warnings = build_text_output(
+        template_path, input_path, cdd_path, sheet, mapping, input_text=input_text
+    )
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(text)
     return warnings
