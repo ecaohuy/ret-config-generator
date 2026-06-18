@@ -152,6 +152,9 @@ def build_rows(cdd_path, sheet, mapping):
     """
     band_map = mapping["band_map"]
     sector_map = mapping["sector_map"]
+    cell_id_map = mapping.get("cell_id_map", {})
+    band_by_tens = cell_id_map.get("band_by_tens", {})
+    sector_by_units = cell_id_map.get("sector_by_units", {})
     rru_cn = mapping["constants"]["rru_cn"]
     rru_sn = mapping["constants"]["rru_sn"]
     three_g = mapping.get("three_g", {})
@@ -172,6 +175,8 @@ def build_rows(cdd_path, sheet, mapping):
         "ne_id": hdr_cfg.get("ne_id", "Ne ID (New)"),
         "cell_name": hdr_cfg.get("cell_name", "CellName (New)[Key]"),
         "e_tilt": hdr_cfg.get("e_tilt", "E_TILT"),
+        "local_cell_id": hdr_cfg.get("local_cell_id", "Local Cell ID (New)"),
+        "tx_rx_mode": hdr_cfg.get("tx_rx_mode", "TxRxMode (New)"),
     }
     cell_targets = [_norm_header(wanted["cell_name"])]
     hdr_idx, norm = _locate_header(all_rows, cell_targets)
@@ -191,6 +196,7 @@ def build_rows(cdd_path, sheet, mapping):
     src_rows = all_rows[hdr_idx + 1:]
     by_sector = defaultdict(dict)   # (site_new, ne_id, Y) -> {X: e_tilt}
     sector_site_old = {}            # (site_new, ne_id, Y) -> site_old
+    by_sector_txrx = {}             # (site_new, ne_id, Y) -> TxRxMode (New)
     sector_order = []
     seen_sector = set()
     skipped = []
@@ -211,8 +217,20 @@ def build_rows(cdd_path, sheet, mapping):
         if len(cell) < 2:
             skipped.append((cell, "too short"))
             continue
-        X = cell[-2]
-        Y = cell[-1]
+        # Band (X) and sector (Y): Local Cell ID (New) is authoritative when
+        # present (tens digit -> band, units digit -> sector); otherwise fall
+        # back to the CellName tail chars (cell[-2], cell[-1]).
+        X = Y = None
+        lcid = _get(r, "local_cell_id")
+        if lcid is not None:
+            digits = str(lcid).strip()
+            if digits.isdigit() and len(digits) >= 2:
+                X = band_by_tens.get(digits[-2])
+                Y = sector_by_units.get(digits[-1])
+        if X is None:
+            X = cell[-2]
+        if Y is None:
+            Y = cell[-1]
         if X not in band_map or X == "_NOT_USED_":
             skipped.append((cell, f"unknown X={X}"))
             continue
@@ -224,6 +242,13 @@ def build_rows(cdd_path, sheet, mapping):
             seen_sector.add(key)
             sector_order.append(key)
         sector_site_old[key] = site_old
+        # Capture TxRxMode (New) per sector (first non-blank wins) for the
+        # forthcoming device-count redesign; not yet consumed by emission.
+        txrx = _get(r, "tx_rx_mode")
+        if key not in by_sector_txrx or (
+            by_sector_txrx[key] in (None, "") and txrx not in (None, "")
+        ):
+            by_sector_txrx[key] = txrx
         try:
             e_tilt_val = float(e_tilt) if e_tilt not in (None, "-") else 0.0
         except (TypeError, ValueError):

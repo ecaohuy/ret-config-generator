@@ -10,8 +10,23 @@
       "site_new": "SiteName (RRU Location)_New",
       "ne_id": "Ne ID (New)",
       "cell_name": "CellName (New)[Key]",
-      "e_tilt": "E_TILT"
+      "e_tilt": "E_TILT",
+      "local_cell_id": "Local Cell ID (New)",
+      "tx_rx_mode": "TxRxMode (New)"
     }
+  },
+  "cell_id_map": {
+    "band_by_tens": { "1": "C", "3": "E", "5": "D" },
+    "sector_by_units": { "1": "A", "2": "B", "3": "C", "4": "D" },
+    "note": "Local Cell ID (New): tens digit -> band (X), units digit -> sector (Y). Authoritative (band, sector) key; falls back to CellName chars (cell[-2], cell[-1]) when absent or unrecognized."
+  },
+  "tx_rx_mode": {
+    "header": "TxRxMode (New)",
+    "values": ["4T4R", "2T2R"],
+    "second_port_not_used_when": "2T2R",
+    "not_used_token_suffix": "_NOT_USED",
+    "not_used_tilt": 0,
+    "note": "L1800-only sector: 4T4R keeps device _2 as L1800; 2T2R makes it L1800_NOT_USED, tilt 0 (Case 6 in RET-Tool-logic.xlsx). Currently parsed and stored per sector; the device-count redesign will consume it. Output is unchanged for now."
   },
   "target": {
     "file": "RETConfigWDTInternal.xlsx",
