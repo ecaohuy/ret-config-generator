@@ -171,7 +171,8 @@ def build_rows(cdd_path, sheet, mapping):
     tg_band = three_g.get("governs_band")            # e.g. "E"
     tg_absent = three_g.get("absent_band_token", "NOT_USED")
     # Case 8: site is in the 3G sheet but this sector isn't (4G has more sectors
-    # than 3G) -> U2100_NOT_USED, vs. plain NOT_USED when the site has no 3G row.
+    # than 3G). Both this and a wholly-absent site emit U2100_NOT_USED per
+    # mapping.json; kept separate so the tokens can diverge again if needed.
     tg_partial_absent = three_g.get("partial_absent_band_token", tg_absent)
     # RRU Name prefix name: NEName_New (ne_name) by default, falling back to
     # SiteName_New (site_new) when blank. Configurable in field_rules.rru_name.
@@ -342,8 +343,9 @@ def build_rows(cdd_path, sheet, mapping):
                     tg_tilt = three_g_tilts[(site_old, sector_num)]
                     rcu_tilt = round((tg_tilt or 0.0) * 10)
                 else:
-                    # Case 8: site is in 3G but lacks this sector -> U2100_NOT_USED;
-                    # site entirely absent from 3G -> plain NOT_USED.
+                    # No 3G tilt for this sector -> U2100_NOT_USED, whether the
+                    # site is in 3G but lacks this sector (Case 8) or entirely
+                    # absent from 3G. Tokens are configurable in mapping.json.
                     band_token = tg_partial_absent if site_old in three_g_sites else tg_absent
                     rcu_tilt = 0
             elif l1800_case and X == l1800_naming["device1_band"]:
