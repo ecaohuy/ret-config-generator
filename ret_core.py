@@ -282,9 +282,17 @@ def build_rows(cdd_path, sheet, mapping):
         by_sector[key][X] = e_tilt_val
 
     rows = []
+    # Index for the text (MML) feature, keyed by SiteName_New (== RET_input.txt
+    # site line). Holds the {SiteName_New}_{Ne ID} DEVICENAME prefix and the
+    # per-(sector_id, device position) RCU Tilt. Kept independent of the xlsx
+    # RRU-Name prefix so the MML keeps using SiteName_New per CLAUDE.md.
+    site_index = {}
     for key in sector_order:
         site_new, ne_id, Y = key
         sec = sector_map[Y]
+        site_entry = site_index.setdefault(
+            site_new, {"prefix": f"{site_new}_{ne_id}", "tilts": {}}
+        )
         # Output 'Site Name(*)' = NEName_New from the CDD (falls back to
         # {site_new}_{ne_id} when that column is missing). The RRU/Device Name
         # prefix name is chosen by prefix_source (ne_name by default), so it is
@@ -322,7 +330,7 @@ def build_rows(cdd_path, sheet, mapping):
                 l1800_case = case
                 break
 
-        for X in DEVICE_ORDER:
+        for pos, X in enumerate(DEVICE_ORDER):
             band = band_map[X]
             slot = band["slot_suffix"]
             band_token = band["band_token"]
@@ -358,6 +366,7 @@ def build_rows(cdd_path, sheet, mapping):
             else:
                 rcu_tilt = round(by_sector[key].get(X, 0.0) * 10)
             rru_name = f"{prefix_name}_{ne_id}_{band_token}_{sec['sector_id']}{slot}"
+            site_entry["tilts"][(sec["sector_id"], pos)] = rcu_tilt
             rows.append([
                 site_name,
                 rru_name,
@@ -369,7 +378,7 @@ def build_rows(cdd_path, sheet, mapping):
                 rru_name,   # column H = column B (Device Name = RRU Name)
             ])
 
-    return rows, skipped, len(sector_order)
+    return rows, skipped, len(sector_order), site_index
 
 
 def _find_template_header_row(ws, headers, max_scan=20):
@@ -498,37 +507,23 @@ def parse_ret_input_text(text, mapping, source="pasted input"):
     return site, serials
 
 
-def _site_tilt_index(rows, site, mapping):
-    """From build_rows output, return (new_prefix, tilt_by_sector_pos) for ``site``.
+def _site_tilt_index(site_index, site):
+    """Return (new_prefix, tilt_by_sector_pos) for ``site`` from build_rows.
 
-    ``new_prefix`` is the {SiteName_New}_{Ne ID} prefix for the site, taken from
-    the RRU Name (column B) since the Site Name column (A) now holds NEName_New.
-    ``tilt_by_sector_pos`` maps (sector_id, position) -> RCU Tilt, where position
-    is the device's 0-based order within its sector (build_rows emits the 4
-    devices per sector in a fixed order, matching the template's per-sector
-    device order).
+    ``site`` is the RET_input.txt site line, matched against SiteName_New (the
+    key of ``site_index``) regardless of the xlsx RRU-Name prefix. ``new_prefix``
+    is the {SiteName_New}_{Ne ID} DEVICENAME prefix; ``tilt_by_sector_pos`` maps
+    (sector_id, position) -> RCU Tilt, position being the device's 0-based order
+    within its sector (the template's per-sector device order).
     """
-    # RRU Name = "{SiteName_New}_{Ne ID}_{band}_{sector_id}_{slot}"; the site
-    # match key (SiteName_New) is its first underscore token.
-    site_rows = [r for r in rows if str(r[1]).split("_", 1)[0] == site]
-    if not site_rows:
-        available = sorted({str(r[1]).split("_", 1)[0] for r in rows})
+    entry = site_index.get(site)
+    if entry is None:
+        available = ", ".join(sorted(site_index))
         raise ValueError(
             "Site %r (from RET input) was not found in the CDD output.\n"
-            "Sites available in the CDD: %s" % (site, ", ".join(available))
+            "Sites available in the CDD: %s" % (site, available)
         )
-    new_prefix = "_".join(str(site_rows[0][1]).split("_")[:2])
-
-    tilt_by_sector_pos = {}
-    pos_counter = defaultdict(int)
-    for r in site_rows:
-        # RRU Name = "{prefix}_{band}_{sector_id}_{slot}"; sector_id is the
-        # second-to-last underscore segment.
-        sector_id = str(r[1]).rsplit("_", 2)[1]
-        pos = pos_counter[sector_id]
-        tilt_by_sector_pos[(sector_id, pos)] = r[6]
-        pos_counter[sector_id] += 1
-    return new_prefix, tilt_by_sector_pos
+    return entry["prefix"], entry["tilts"]
 
 
 def build_text_output(template_path, input_path, cdd_path, sheet, mapping,
@@ -543,8 +538,8 @@ def build_text_output(template_path, input_path, cdd_path, sheet, mapping,
         site, serials = parse_ret_input_text(input_text, mapping)
     else:
         site, serials = parse_ret_input(input_path, mapping)
-    rows, _, _ = build_rows(cdd_path, sheet, mapping)
-    new_prefix, tilt_by_sector_pos = _site_tilt_index(rows, site, mapping)
+    _rows, _, _, site_index = build_rows(cdd_path, sheet, mapping)
+    new_prefix, tilt_by_sector_pos = _site_tilt_index(site_index, site)
 
     srn_to_sector = {
         str(v["rru_srn"]): v["sector_id"] for v in mapping["sector_map"].values()

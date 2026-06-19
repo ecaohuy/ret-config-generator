@@ -16,7 +16,7 @@ def main():
     sheet = mapping["source"]["sheet"]
     target_sheet = mapping.get("target", {}).get("sheet", "Internal")
 
-    rows, skipped, sectors = ret_core.build_rows(CDD_PATH, sheet, mapping)
+    rows, skipped, sectors, _ = ret_core.build_rows(CDD_PATH, sheet, mapping)
     ret_core.write_output(TEMPLATE_PATH, target_sheet, rows, OUTPUT_PATH)
 
     print(f"Wrote {OUTPUT_PATH}: {len(rows)} data rows across {sectors} sectors.")

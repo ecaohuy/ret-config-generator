@@ -356,7 +356,7 @@ class App(tk.Tk):
         if not os.path.exists(self.mapping_var.get()):
             raise ValueError("Mapping file not found.")
         mapping = ret_core.load_mapping(self.mapping_var.get())
-        rows, skipped, sectors = ret_core.build_rows(
+        rows, skipped, sectors, _ = ret_core.build_rows(
             self.cdd_var.get(), self.sheet_var.get(), mapping
         )
         return mapping, rows, skipped, sectors
