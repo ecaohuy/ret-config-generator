@@ -75,6 +75,7 @@
     "site_column": "A",
     "logical_sector_column": "B",
     "etilt_column": "F",
+    "etilt_prefer_nonzero": true,
     "separator": "-",
     "match_note": "Site match key = 3G 'Site' column == 4G 'SiteName (RRU Location)_Old'. The sector number is taken from the Logical Sector Name (text after the last separator), NOT from its prefix.",
     "governs_device": 3,
@@ -83,7 +84,7 @@
     "absent_band_token": "U2100_NOT_USED",
     "partial_absent_band_token": "U2100_NOT_USED",
     "sector_id_to_number": { "S1": "1", "S2": "2", "S3": "3", "S4": "4" },
-    "rule": "Device No 3 (band E) is resolved against the 3G Installation Design sheet. Build the lookup key as {SiteName_Old}{separator}{sector number}. If that Logical Sector Name exists, emit NSN_U2100 (e.g. AGGPQC01_686001_NSN_U2100_S1_1) with RCU Tilt = round(New E-Tilt * 10) taken from that sheet (first non-blank value per sector). If it does not exist, tilt = 0 and the band token depends on whether the SITE appears anywhere in the 3G sheet: if the site has at least one 3G sector but not this one (4G has more sectors than 3G, Case 8) emit partial_absent_band_token (e.g. DTPLTN01_704346_U2100_NOT_USED_S4_1); if the site is entirely absent from 3G emit absent_band_token (e.g. AGGPQC01_686001_U2100_NOT_USED_S1_1). The same sector and _1 suffix are kept; Color/SRN of the device-3 slot are unchanged."
+    "rule": "Device No 3 (band E) is resolved against the 3G Installation Design sheet. Build the lookup key as {SiteName_Old}{separator}{sector number}. If that Logical Sector Name exists, emit NSN_U2100 (e.g. AGGPQC01_686001_NSN_U2100_S1_1) with RCU Tilt = round(New E-Tilt * 10) taken from that sheet (first non-blank value per sector; with etilt_prefer_nonzero a nonzero carrier row overrides a leading 0 so an unfilled row does not mask the real tilt). If it does not exist, tilt = 0 and the band token depends on whether the SITE appears anywhere in the 3G sheet: if the site has at least one 3G sector but not this one (4G has more sectors than 3G, Case 8) emit partial_absent_band_token (e.g. DTPLTN01_704346_U2100_NOT_USED_S4_1); if the site is entirely absent from 3G emit absent_band_token (e.g. AGGPQC01_686001_U2100_NOT_USED_S1_1). The same sector and _1 suffix are kept; Color/SRN of the device-3 slot are unchanged."
   },
   "constants": {
     "rru_cn": 0,

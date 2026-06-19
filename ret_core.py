@@ -92,8 +92,11 @@ def load_three_g_tilts(cdd_wb, mapping):
     '{SiteName_Old}-{sector number}' (e.g. 'KGPQ01-2'). Device No 3 (band E) is
     emitted as NSN_U2100 only when its sector appears here (else NOT_USED), and
     its tilt is taken from the 'New E-Tilt' column. A sector can span multiple
-    rows (carriers); the first non-blank New E-Tilt wins. Membership in the dict
-    means the sector is present. Empty dict if the sheet/config is absent.
+    rows (carriers); the first non-blank New E-Tilt wins, except a nonzero value
+    overrides a previously stored 0 when three_g.etilt_prefer_nonzero (default
+    true), so an unfilled (0) carrier row does not mask the sector's real tilt.
+    Membership in the dict means the sector is present. Empty dict if the
+    sheet/config is absent.
     """
     cfg = mapping.get("three_g")
     if not cfg or cfg["sheet"] not in cdd_wb.sheetnames:
@@ -125,6 +128,11 @@ def load_three_g_tilts(cdd_wb, mapping):
         return {}
 
     sep = cfg.get("separator", "-")
+    # When a sector spans multiple carrier rows, prefer a nonzero New E-Tilt over
+    # a leading 0 (an unfilled carrier row should not mask the real tilt). When
+    # false, the first non-blank value wins even if it is 0. Configurable in
+    # mapping.json -> three_g.etilt_prefer_nonzero.
+    prefer_nonzero = cfg.get("etilt_prefer_nonzero", True)
     tilts = {}
     for r in all_rows[hdr_idx + 1:]:
         if not r or len(r) <= sec_col or r[sec_col] is None:
@@ -146,7 +154,14 @@ def load_three_g_tilts(cdd_wb, mapping):
         except (TypeError, ValueError):
             e_tilt_val = None
         # First non-blank tilt wins; still register the key if only blanks seen.
-        if key not in tilts or (tilts[key] is None and e_tilt_val is not None):
+        # With prefer_nonzero, a nonzero value also overrides a previously stored
+        # 0 so an unfilled (0) carrier row doesn't mask the sector's real tilt.
+        if key not in tilts:
+            tilts[key] = e_tilt_val
+        elif tilts[key] is None and e_tilt_val is not None:
+            tilts[key] = e_tilt_val
+        elif (prefer_nonzero and tilts[key] in (None, 0.0)
+                and e_tilt_val not in (None, 0.0)):
             tilts[key] = e_tilt_val
     return tilts
 
@@ -219,6 +234,7 @@ def build_rows(cdd_path, sheet, mapping):
     src_rows = all_rows[hdr_idx + 1:]
     by_sector = defaultdict(dict)   # (site_new, ne_id, Y) -> {X: e_tilt}
     sector_site_old = {}            # (site_new, ne_id, Y) -> site_old
+    site_old_by_site = {}           # (site_new, ne_id) -> site_old (site-wide)
     sector_ne_name = {}             # (site_new, ne_id, Y) -> NEName_New
     by_sector_txrx = defaultdict(dict)  # (site_new, ne_id, Y) -> {X: TxRxMode}
     sector_order = []
@@ -270,6 +286,13 @@ def build_rows(cdd_path, sheet, mapping):
         # is the 3G-sheet lookup key for the CRb3/NSN_U2100 device).
         if site_old and key not in sector_site_old:
             sector_site_old[key] = site_old
+        # SiteName_Old is a property of the whole physical site (identical for
+        # every sector), but some CDDs leave it blank on every row of a given
+        # sector. Keep a site-wide first-non-blank value so such a sector can
+        # inherit it for the 3G/CRb3 lookup instead of falling to NOT_USED.
+        site_key = (site_new, ne_id)
+        if site_old and site_key not in site_old_by_site:
+            site_old_by_site[site_key] = site_old
         ne_name = _get(r, "ne_name")
         if ne_name not in (None, "") and key not in sector_ne_name:
             sector_ne_name[key] = str(ne_name).strip()
@@ -303,7 +326,7 @@ def build_rows(cdd_path, sheet, mapping):
         sources = {"ne_name": ne_name_val, "site_new": site_new}
         prefix_name = sources.get(prefix_source) or sources.get(prefix_fallback) or site_new
         sector_num = sec["sector_id"][1:]  # "S1" -> "1"
-        site_old = sector_site_old.get(key)
+        site_old = sector_site_old.get(key) or site_old_by_site.get((site_new, ne_id))
         present = by_sector[key]  # bands found in CDD for this sector -> e_tilt
 
         # Resolve the L1800-band naming case (RET-Tool-logic.xlsx Cases 1-6)
