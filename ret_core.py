@@ -51,6 +51,16 @@ def _col_letter_to_index(letter):
     return ord(str(letter).strip().upper()[0]) - ord("A")
 
 
+def _norm_uarfcn(v):
+    """Normalize a UARFCN for tolerant equality (10612 == 10612.0 == '10612')."""
+    if v is None:
+        return ""
+    try:
+        return str(int(float(v)))
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+
 def _find_index(norm_headers, targets):
     """Index of the first header matching any target (exact, then startswith)."""
     targets = [t for t in targets if t]
@@ -113,10 +123,12 @@ def load_three_g_tilts(cdd_wb, mapping):
     sec_targets = [_norm_header(cfg.get("logical_sector_header", "")),
                    _norm_header(cfg.get("logical_sector_header_prefix", "Logical Sector Name"))]
     tilt_targets = [_norm_header(cfg.get("etilt_header", "New E-Tilt"))]
+    uarfcn_targets = [_norm_header(cfg.get("uarfcn_header", "UARFCN"))]
     hdr_idx, norm = _locate_header(all_rows, sec_targets)
     site_col = _find_index(norm, site_targets)
     sec_col = _find_index(norm, sec_targets)
     tilt_col = _find_index(norm, tilt_targets)
+    uarfcn_col = _find_index(norm, uarfcn_targets)
     # Fall back to configured column letters if a header isn't found.
     if site_col is None and cfg.get("site_column"):
         site_col = _col_letter_to_index(cfg["site_column"])
@@ -124,8 +136,16 @@ def load_three_g_tilts(cdd_wb, mapping):
         sec_col = _col_letter_to_index(cfg["logical_sector_column"])
     if tilt_col is None and cfg.get("etilt_column"):
         tilt_col = _col_letter_to_index(cfg["etilt_column"])
+    if uarfcn_col is None and cfg.get("uarfcn_column"):
+        uarfcn_col = _col_letter_to_index(cfg["uarfcn_column"])
     if sec_col is None:
         return {}
+
+    # The New E-Tilt is taken only from the carrier row whose UARFCN matches
+    # three_g.etilt_uarfcn (10612 for CRb3). Other carrier rows still mark the
+    # sector as present but contribute no tilt. Configurable in mapping.json.
+    etilt_uarfcn = cfg.get("etilt_uarfcn")
+    etilt_uarfcn_key = _norm_uarfcn(etilt_uarfcn) if etilt_uarfcn is not None else None
 
     sep = cfg.get("separator", "-")
     # When a sector spans multiple carrier rows, prefer a nonzero New E-Tilt over
@@ -153,6 +173,15 @@ def load_three_g_tilts(cdd_wb, mapping):
             e_tilt_val = float(e_tilt) if e_tilt not in (None, "-", "") else None
         except (TypeError, ValueError):
             e_tilt_val = None
+        # Restrict the tilt source to the UARFCN==etilt_uarfcn carrier row. Rows
+        # with any other UARFCN still register the sector (membership) but supply
+        # no tilt value, so the 10612 carrier's New E-Tilt is the one that wins.
+        if etilt_uarfcn_key is not None:
+            row_uarfcn = (r[uarfcn_col]
+                          if (uarfcn_col is not None and len(r) > uarfcn_col)
+                          else None)
+            if _norm_uarfcn(row_uarfcn) != etilt_uarfcn_key:
+                e_tilt_val = None
         # First non-blank tilt wins; still register the key if only blanks seen.
         # With prefer_nonzero, a nonzero value also overrides a previously stored
         # 0 so an unfilled (0) carrier row doesn't mask the sector's real tilt.
