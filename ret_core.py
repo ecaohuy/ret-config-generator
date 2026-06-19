@@ -30,6 +30,15 @@ def load_mapping(path):
         return json.load(f)
 
 
+def _scaled_tilt(present, band_letter, fallback=None):
+    """E_TILT (degrees) for a band -> 0.1-degree units, with an optional
+    fallback band when the primary band has no E_TILT in this sector."""
+    t = present.get(band_letter)
+    if t is None and fallback is not None:
+        t = present.get(fallback)
+    return round((t or 0.0) * 10)
+
+
 def _norm_header(s):
     """Normalize a header cell for tolerant matching (case/whitespace-insensitive)."""
     if s is None:
@@ -152,6 +161,7 @@ def build_rows(cdd_path, sheet, mapping):
     """
     band_map = mapping["band_map"]
     sector_map = mapping["sector_map"]
+    l1800_naming = mapping.get("l1800_device_naming")
     cell_id_map = mapping.get("cell_id_map", {})
     band_by_tens = cell_id_map.get("band_by_tens", {})
     sector_by_units = cell_id_map.get("sector_by_units", {})
@@ -160,11 +170,22 @@ def build_rows(cdd_path, sheet, mapping):
     three_g = mapping.get("three_g", {})
     tg_band = three_g.get("governs_band")            # e.g. "E"
     tg_absent = three_g.get("absent_band_token", "NOT_USED")
+    # Case 8: site is in the 3G sheet but this sector isn't (4G has more sectors
+    # than 3G) -> U2100_NOT_USED, vs. plain NOT_USED when the site has no 3G row.
+    tg_partial_absent = three_g.get("partial_absent_band_token", tg_absent)
+    # RRU Name prefix name: NEName_New (ne_name) by default, falling back to
+    # SiteName_New (site_new) when blank. Configurable in field_rules.rru_name.
+    rru_cfg = mapping.get("field_rules", {}).get("rru_name", {})
+    prefix_source = rru_cfg.get("prefix_source", "site_new")
+    prefix_fallback = rru_cfg.get("prefix_fallback", "site_new")
 
     cdd_wb = load_workbook(cdd_path, data_only=True)
     cdd_ws = cdd_wb[sheet]
     all_rows = list(cdd_ws.iter_rows(min_row=1, values_only=True))
     three_g_tilts = load_three_g_tilts(cdd_wb, mapping)
+    # Sites that appear in the 3G sheet at all (any sector). Used to distinguish
+    # Case 8 (site present, this sector missing) from a site wholly absent.
+    three_g_sites = {site_old for (site_old, _num) in three_g_tilts}
     cdd_wb.close()
 
     # Resolve columns by HEADER NAME so reordered/extra columns don't break parsing.
@@ -172,6 +193,7 @@ def build_rows(cdd_path, sheet, mapping):
     wanted = {
         "site_old": hdr_cfg.get("site_old", "SiteName (RRU Location)_Old"),
         "site_new": hdr_cfg.get("site_new", "SiteName (RRU Location)_New"),
+        "ne_name": hdr_cfg.get("ne_name", "NEName_New"),
         "ne_id": hdr_cfg.get("ne_id", "Ne ID (New)"),
         "cell_name": hdr_cfg.get("cell_name", "CellName (New)[Key]"),
         "e_tilt": hdr_cfg.get("e_tilt", "E_TILT"),
@@ -196,7 +218,8 @@ def build_rows(cdd_path, sheet, mapping):
     src_rows = all_rows[hdr_idx + 1:]
     by_sector = defaultdict(dict)   # (site_new, ne_id, Y) -> {X: e_tilt}
     sector_site_old = {}            # (site_new, ne_id, Y) -> site_old
-    by_sector_txrx = {}             # (site_new, ne_id, Y) -> TxRxMode (New)
+    sector_ne_name = {}             # (site_new, ne_id, Y) -> NEName_New
+    by_sector_txrx = defaultdict(dict)  # (site_new, ne_id, Y) -> {X: TxRxMode}
     sector_order = []
     seen_sector = set()
     skipped = []
@@ -241,14 +264,17 @@ def build_rows(cdd_path, sheet, mapping):
         if key not in seen_sector:
             seen_sector.add(key)
             sector_order.append(key)
-        sector_site_old[key] = site_old
-        # Capture TxRxMode (New) per sector (first non-blank wins) for the
-        # forthcoming device-count redesign; not yet consumed by emission.
-        txrx = _get(r, "tx_rx_mode")
-        if key not in by_sector_txrx or (
-            by_sector_txrx[key] in (None, "") and txrx not in (None, "")
-        ):
-            by_sector_txrx[key] = txrx
+        # First non-blank SiteName_Old wins; a sector's band-D rows often have
+        # a blank _Old, which must not clobber the band-C row's real value (it
+        # is the 3G-sheet lookup key for the CRb3/NSN_U2100 device).
+        if site_old and key not in sector_site_old:
+            sector_site_old[key] = site_old
+        ne_name = _get(r, "ne_name")
+        if ne_name not in (None, "") and key not in sector_ne_name:
+            sector_ne_name[key] = str(ne_name).strip()
+        # Capture TxRxMode (New) per band so the L1800-band naming can prefer
+        # the primary (L1800) cell's mode, falling back to any non-blank value.
+        by_sector_txrx[key][X] = _get(r, "tx_rx_mode")
         try:
             e_tilt_val = float(e_tilt) if e_tilt not in (None, "-") else 0.0
         except (TypeError, ValueError):
@@ -259,9 +285,43 @@ def build_rows(cdd_path, sheet, mapping):
     for key in sector_order:
         site_new, ne_id, Y = key
         sec = sector_map[Y]
-        site_name = f"{site_new}_{ne_id}"
+        # Output 'Site Name(*)' = NEName_New from the CDD (falls back to
+        # {site_new}_{ne_id} when that column is missing). The RRU/Device Name
+        # prefix name is chosen by prefix_source (ne_name by default), so it is
+        # the NEName_New (e.g. DTPLTN01N), not SiteName_New (e.g. DTPLTN01).
+        ne_name_val = sector_ne_name.get(key)
+        site_name = ne_name_val or f"{site_new}_{ne_id}"
+        sources = {"ne_name": ne_name_val, "site_new": site_new}
+        prefix_name = sources.get(prefix_source) or sources.get(prefix_fallback) or site_new
         sector_num = sec["sector_id"][1:]  # "S1" -> "1"
         site_old = sector_site_old.get(key)
+        present = by_sector[key]  # bands found in CDD for this sector -> e_tilt
+
+        # Resolve the L1800-band naming case (RET-Tool-logic.xlsx Cases 1-6)
+        # once per sector: which token the Lb1 (_1) and CLb2 (_2) devices get,
+        # from band presence + the sector TxRxMode (first match wins). CRb3
+        # (band E) and Rb4 (NOT_USED) are unaffected by this.
+        l1800_case = None
+        if l1800_naming:
+            txrx_map = by_sector_txrx.get(key, {})
+            txrx = txrx_map.get(l1800_naming["primary_band"])
+            if txrx in (None, ""):
+                txrx = next((v for v in txrx_map.values() if v not in (None, "")), None)
+            if txrx in (None, ""):
+                txrx = l1800_naming.get("default_tx_rx_mode")
+            has_l2100 = l1800_naming["l2100_band"] in present
+            has_f2 = l1800_naming["f2_band"] in present
+            for case in l1800_naming["cases"]:
+                cond = case.get("when", {})
+                if "l2100" in cond and cond["l2100"] != has_l2100:
+                    continue
+                if "f2" in cond and cond["f2"] != has_f2:
+                    continue
+                if "tx_rx_mode" in cond and cond["tx_rx_mode"] != txrx:
+                    continue
+                l1800_case = case
+                break
+
         for X in DEVICE_ORDER:
             band = band_map[X]
             slot = band["slot_suffix"]
@@ -269,16 +329,35 @@ def build_rows(cdd_path, sheet, mapping):
             if X == "_NOT_USED_":
                 rcu_tilt = 0
             elif X == tg_band:
-                # Device No 3: presence + tilt come from the 3G sheet.
+                # Device No 3 (CRb3): presence + tilt come from the 3G sheet.
                 if (site_old, sector_num) in three_g_tilts:
                     tg_tilt = three_g_tilts[(site_old, sector_num)]
                     rcu_tilt = round((tg_tilt or 0.0) * 10)
                 else:
-                    band_token = tg_absent
+                    # Case 8: site is in 3G but lacks this sector -> U2100_NOT_USED;
+                    # site entirely absent from 3G -> plain NOT_USED.
+                    band_token = tg_partial_absent if site_old in three_g_sites else tg_absent
                     rcu_tilt = 0
+            elif l1800_case and X == l1800_naming["device1_band"]:
+                band_token = l1800_case["device1"]
+                rcu_tilt = _scaled_tilt(
+                    present, l1800_naming["tilt_band"], l1800_naming.get("tilt_fallback")
+                )
+            elif l1800_case and X == l1800_naming["device2_band"]:
+                band_token = l1800_case["device2"]
+                if "device2_tilt" in l1800_case:
+                    rcu_tilt = l1800_case["device2_tilt"]
+                elif "device2_tilt_band" in l1800_case:
+                    rcu_tilt = _scaled_tilt(
+                        present, l1800_case["device2_tilt_band"], l1800_naming["tilt_band"]
+                    )
+                else:
+                    rcu_tilt = _scaled_tilt(
+                        present, l1800_naming["tilt_band"], l1800_naming.get("tilt_fallback")
+                    )
             else:
                 rcu_tilt = round(by_sector[key].get(X, 0.0) * 10)
-            rru_name = f"{site_new}_{ne_id}_{band_token}_{sec['sector_id']}{slot}"
+            rru_name = f"{prefix_name}_{ne_id}_{band_token}_{sec['sector_id']}{slot}"
             rows.append([
                 site_name,
                 rru_name,
@@ -422,20 +501,23 @@ def parse_ret_input_text(text, mapping, source="pasted input"):
 def _site_tilt_index(rows, site, mapping):
     """From build_rows output, return (new_prefix, tilt_by_sector_pos) for ``site``.
 
-    ``new_prefix`` is the CDD 'Site Name' ({SiteName_New}_{Ne ID}) for the site.
+    ``new_prefix`` is the {SiteName_New}_{Ne ID} prefix for the site, taken from
+    the RRU Name (column B) since the Site Name column (A) now holds NEName_New.
     ``tilt_by_sector_pos`` maps (sector_id, position) -> RCU Tilt, where position
     is the device's 0-based order within its sector (build_rows emits the 4
     devices per sector in a fixed order, matching the template's per-sector
     device order).
     """
-    site_rows = [r for r in rows if str(r[0]).rsplit("_", 1)[0] == site]
+    # RRU Name = "{SiteName_New}_{Ne ID}_{band}_{sector_id}_{slot}"; the site
+    # match key (SiteName_New) is its first underscore token.
+    site_rows = [r for r in rows if str(r[1]).split("_", 1)[0] == site]
     if not site_rows:
-        available = sorted({str(r[0]).rsplit("_", 1)[0] for r in rows})
+        available = sorted({str(r[1]).split("_", 1)[0] for r in rows})
         raise ValueError(
             "Site %r (from RET input) was not found in the CDD output.\n"
             "Sites available in the CDD: %s" % (site, ", ".join(available))
         )
-    new_prefix = str(site_rows[0][0])
+    new_prefix = "_".join(str(site_rows[0][1]).split("_")[:2])
 
     tilt_by_sector_pos = {}
     pos_counter = defaultdict(int)
